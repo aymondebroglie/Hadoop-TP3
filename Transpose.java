@@ -13,16 +13,17 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
 public class Transpose {
+
     public static class Map extends Mapper<LongWritable, Text, IntWritable, Text> {
-        private Text word = new Text();
 
         public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
             String line = value.toString();
-            StringTokenizer tokenizer = new StringTokenizer(line);
+            String[] words = line.split(",");
             int i = 0;
-            while (tokenizer.hasMoreTokens()) {
-                word.set(tokenizer.nextToken());
-                context.write(new IntWritable(i), new Text(String.valueOf(key.get()) + word));
+            for (String word : words) {
+                //The key i is the column number
+                //The value is the byte offset + the value
+                context.write(new IntWritable(i), new Text(String.valueOf(key.get()) + " " + word));
                 i++;
             }
         }
@@ -32,29 +33,31 @@ public class Transpose {
 
         public void reduce(IntWritable key, Iterable<Text> values, Context context)
                 throws IOException, InterruptedException {
-            //We need the size of the iterable
-            int size = 0;
+            //We need to sort by offset that way we keep the line order
+            //A tree map is naturally sorted
+            TreeMap<Integer,String> map = new TreeMap<>();
             for(Text val : values){
-                size ++;
+                String[] input = val.toString().split(" ");
+                map.put(Integer.parseInt(input[0]), input[1]);
             }
-            String[] linetowrite = new String[size];
-            for (Text val : values) {
-                int index = Integer.parseInt(val.toString().split(" ")[0]);
-                linetowrite[index] = val.toString().split(" ")[1];
-            }
+
+            //The sorting is done structurally
             String line = "";
-            for (String word : linetowrite) {
-                line += word + ",";
+            for (String value : map.values()) {
+                line += value + ",";
             }
+            //Getting rid of the last comma
+                line = line.substring(0,line.length()-1);
                 context.write(new Text(key.toString()), new Text(line));
 
         }
     }
+
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
 
-        Job job = new Job(conf, "tanspose");
-
+        Job job = Job.getInstance(conf, "transpose");
+        job.setJarByClass(Transpose.class);
         job.setOutputKeyClass(IntWritable.class);
         job.setOutputValueClass(Text.class);
 
@@ -62,7 +65,7 @@ public class Transpose {
         job.setReducerClass(Reduce.class);
 
         job.setInputFormatClass(TextInputFormat.class);
-        job.setOutputFormatClass(TextOutputFormat.class);
+        job.setOutputFormatClass(CSVOutputFormat.class);
 
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
